@@ -49,8 +49,6 @@
 <h1>api documentation for
     <a
 
-        href="https://github.com/samcday/node-stream-buffer#readme"
-
     >stream-buffers (v3.0.1)</a>
 </h1>
 <h4>Buffer-backed Streams for reading and writing.</h4>
@@ -103,6 +101,12 @@
 
         </li>
 
+        <li>
+
+            <span class="apidocSignatureSpan">object <span class="apidocSignatureSpan">stream-buffers.</span>constants</span>
+
+        </li>
+
     </ol></li>
 
     <li class="apidocModuleLi"><a href="#apidoc.module.stream-buffers.ReadableStreamBuffer">module stream-buffers.ReadableStreamBuffer</a><ol>
@@ -144,6 +148,52 @@
             function <span class="apidocSignatureSpan">stream-buffers.WritableStreamBuffer.</span>super_
             <span class="apidocSignatureSpan">(options)</span>
             </a>
+
+        </li>
+
+    </ol></li>
+
+    <li class="apidocModuleLi"><a href="#apidoc.module.stream-buffers.constants">module stream-buffers.constants</a><ol>
+
+        <li>
+
+            <a class="apidocElementLiA" href="#apidoc.element.stream-buffers.constants.ReadableStreamBuffer">
+            function <span class="apidocSignatureSpan">stream-buffers.constants.</span>ReadableStreamBuffer
+            <span class="apidocSignatureSpan">(opts)</span>
+            </a>
+
+        </li>
+
+        <li>
+
+            <a class="apidocElementLiA" href="#apidoc.element.stream-buffers.constants.WritableStreamBuffer">
+            function <span class="apidocSignatureSpan">stream-buffers.constants.</span>WritableStreamBuffer
+            <span class="apidocSignatureSpan">(opts)</span>
+            </a>
+
+        </li>
+
+        <li>
+
+            <span class="apidocSignatureSpan">number <span class="apidocSignatureSpan">stream-buffers.constants.</span>DEFAULT_CHUNK_SIZE</span>
+
+        </li>
+
+        <li>
+
+            <span class="apidocSignatureSpan">number <span class="apidocSignatureSpan">stream-buffers.constants.</span>DEFAULT_FREQUENCY</span>
+
+        </li>
+
+        <li>
+
+            <span class="apidocSignatureSpan">number <span class="apidocSignatureSpan">stream-buffers.constants.</span>DEFAULT_INCREMENT_AMOUNT</span>
+
+        </li>
+
+        <li>
+
+            <span class="apidocSignatureSpan">number <span class="apidocSignatureSpan">stream-buffers.constants.</span>DEFAULT_INITIAL_SIZE</span>
 
         </li>
 
@@ -375,6 +425,8 @@ var myWritableStreamBuffer = new streamBuffers.<span class="apidocCodeKeywordSpa
 The default initial size and increment amount are stored in the following constants:
 ...</pre></li>
     </ul>
+
+
 
 
 
@@ -682,6 +734,242 @@ The default initial size and increment amount are stored in the following consta
 }</pre></li>
     <li>example usage<pre class="apidocCodePre">n/a</pre></li>
     </ul>
+
+
+</div>
+
+<div class="apidocSectionDiv">
+<h1><a href="#apidoc.module.stream-buffers.constants" id="apidoc.module.stream-buffers.constants">module stream-buffers.constants</a></h1>
+
+
+    <h2>
+        <a href="#apidoc.element.stream-buffers.constants.ReadableStreamBuffer" id="apidoc.element.stream-buffers.constants.ReadableStreamBuffer">
+        function <span class="apidocSignatureSpan">stream-buffers.constants.</span>ReadableStreamBuffer
+        <span class="apidocSignatureSpan">(opts)</span>
+        </a>
+    </h2>
+    <ul>
+    <li>description and source-code<pre class="apidocCodePre">ReadableStreamBuffer = function (opts) {
+  var that = this;
+  opts = opts || {};
+
+  stream.Readable.call(this, opts);
+
+  this.stopped = false;
+
+  var frequency = opts.hasOwnProperty(&#x27;frequency&#x27;) ? opts.frequency : constants.DEFAULT_FREQUENCY;
+  var chunkSize = opts.chunkSize || constants.DEFAULT_CHUNK_SIZE;
+  var initialSize = opts.initialSize || constants.DEFAULT_INITIAL_SIZE;
+  var incrementAmount = opts.incrementAmount || constants.DEFAULT_INCREMENT_AMOUNT;
+
+  var size = 0;
+  var buffer = new Buffer(initialSize);
+
+  var sendData = function() {
+    var amount = Math.min(chunkSize, size);
+    var sendMore = false;
+
+    if (amount &#x3e; 0) {
+      var chunk = null;
+      chunk = new Buffer(amount);
+      buffer.copy(chunk, 0, 0, amount);
+
+      sendMore = that.push(chunk) !== false;
+
+      buffer.copy(buffer, 0, amount, size);
+      size -= amount;
+    }
+
+    if(size === 0 &#x26;&#x26; that.stopped) {
+      that.push(null);
+    }
+
+    if (sendMore) {
+      sendData.timeout = setTimeout(sendData, frequency);
+    }
+    else {
+      sendData.timeout = null;
+    }
+  };
+
+  this.stop = function() {
+    if (this.stopped) {
+      throw new Error(&#x27;stop() called on already stopped ReadableStreamBuffer&#x27;);
+    }
+    this.stopped = true;
+
+    if (size === 0) {
+      this.push(null);
+    }
+  };
+
+  this.size = function() {
+    return size;
+  };
+
+  this.maxSize = function() {
+    return buffer.length;
+  };
+
+  var increaseBufferIfNecessary = function(incomingDataSize) {
+    if((buffer.length - size) &#x3c; incomingDataSize) {
+      var factor = Math.ceil((incomingDataSize - (buffer.length - size)) / incrementAmount);
+
+      var newBuffer = new Buffer(buffer.length + (incrementAmount * factor));
+      buffer.copy(newBuffer, 0, 0, size);
+      buffer = newBuffer;
+    }
+  };
+
+  this.put = function(data, encoding) {
+    if (that.stopped) {
+      throw new Error(&#x27;Tried to write data to a stopped ReadableStreamBuffer&#x27;);
+    }
+
+    if(Buffer.isBuffer(data)) {
+      increaseBufferIfNecessary(data.length);
+      data.copy(buffer, size, 0);
+      size += data.length;
+    }
+    else {
+      data = data + &#x27;&#x27;;
+      var dataSizeInBytes = Buffer.byteLength(data);
+      increaseBufferIfNecessary(dataSizeInBytes);
+      buffer.write(data, size, encoding || &#x27;utf8&#x27;);
+      size += dataSizeInBytes;
+    }
+  };
+
+  this._read = function() {
+    if (!sendData.timeout) {
+      sendData.timeout = setTimeout(sendData, frequency);
+    }
+  };
+}</pre></li>
+    <li>example usage<pre class="apidocCodePre">...
+### ReadableStreamBuffer
+
+`ReadableStreamBuffer` implements the standard [`stream.Readable`](https://nodejs.org/api/stream.html#stream_class_stream_readable
+), but can have data inserted into it. This data will then be pumped out in chunks as readable events. The data to be sent out is
+ held in a Buffer, which can grow in much the same way as a `WritableStreamBuffer` does, if data is being put in Buffer faster than
+ it is being pumped out.
+
+The frequency in which chunks are pumped out, and the size of the chunks themselves can be configured in the constructor. The initial
+ size and increment amount of internal Buffer can be configured too. In the following example 2kb chunks will be output every 10
+ milliseconds:
+
+```js
+var myReadableStreamBuffer = new streamBuffers.<span class="apidocCodeKeywordSpan">ReadableStreamBuffer</span>({
+	frequency: 10,   // in milliseconds.
+	chunkSize: 2048  // in bytes.
+});
+```
+
+Default frequency and chunk size:
+...</pre></li>
+    </ul>
+
+
+
+    <h2>
+        <a href="#apidoc.element.stream-buffers.constants.WritableStreamBuffer" id="apidoc.element.stream-buffers.constants.WritableStreamBuffer">
+        function <span class="apidocSignatureSpan">stream-buffers.constants.</span>WritableStreamBuffer
+        <span class="apidocSignatureSpan">(opts)</span>
+        </a>
+    </h2>
+    <ul>
+    <li>description and source-code<pre class="apidocCodePre">WritableStreamBuffer = function (opts) {
+  opts = opts || {};
+  opts.decodeStrings = true;
+
+  stream.Writable.call(this, opts);
+
+  var initialSize = opts.initialSize || constants.DEFAULT_INITIAL_SIZE;
+  var incrementAmount = opts.incrementAmount || constants.DEFAULT_INCREMENT_AMOUNT;
+
+  var buffer = new Buffer(initialSize);
+  var size = 0;
+
+  this.size = function() {
+    return size;
+  };
+
+  this.maxSize = function() {
+    return buffer.length;
+  };
+
+  this.getContents = function(length) {
+    if(!size) return false;
+
+    var data = new Buffer(Math.min(length || size, size));
+    buffer.copy(data, 0, 0, data.length);
+
+    if(data.length &#x3c; size)
+      buffer.copy(buffer, 0, data.length);
+
+    size -= data.length;
+
+    return data;
+  };
+
+  this.getContentsAsString = function(encoding, length) {
+    if(!size) return false;
+
+    var data = buffer.toString(encoding || &#x27;utf8&#x27;, 0, Math.min(length || size, size));
+    var dataLength = Buffer.byteLength(data);
+
+    if(dataLength &#x3c; size)
+      buffer.copy(buffer, 0, dataLength);
+
+    size -= dataLength;
+    return data;
+  };
+
+  var increaseBufferIfNecessary = function(incomingDataSize) {
+    if((buffer.length - size) &#x3c; incomingDataSize) {
+      var factor = Math.ceil((incomingDataSize - (buffer.length - size)) / incrementAmount);
+
+      var newBuffer = new Buffer(buffer.length + (incrementAmount * factor));
+      buffer.copy(newBuffer, 0, 0, size);
+      buffer = newBuffer;
+    }
+  };
+
+  this._write = function(chunk, encoding, callback) {
+    increaseBufferIfNecessary(chunk.length);
+    chunk.copy(buffer, size, 0);
+    size += chunk.length;
+    callback();
+  };
+}</pre></li>
+    <li>example usage<pre class="apidocCodePre">...
+```
+
+### WritableStreamBuffer
+
+`WritableStreamBuffer` implements the standard [`stream.Writable`](https://nodejs.org/api/stream.html#stream_class_stream_writable
+) interface. All writes to this stream will accumulate in an internal [`Buffer`](https://nodejs.org/api/buffer.html). If the internal
+ buffer overflows it will be resized automatically. The initial size of the Buffer and the amount in which it grows can be configured
+ in the constructor.
+
+```js
+var myWritableStreamBuffer = new streamBuffers.<span class="apidocCodeKeywordSpan">WritableStreamBuffer</span>({
+	initialSize: (100 * 1024),   // start at 100 kilobytes.
+	incrementAmount: (10 * 1024) // grow by 10 kilobytes each time buffer overflows.
+});
+```
+
+The default initial size and increment amount are stored in the following constants:
+...</pre></li>
+    </ul>
+
+
+
+
+
+
+
+
 
 
 </div>

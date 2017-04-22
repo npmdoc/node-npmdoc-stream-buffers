@@ -129,10 +129,6 @@
             if (!module || module === '.' || module.indexOf('/') >= 0) {
                 return require('path').resolve(process.cwd(), module || '');
             }
-            // search builtin
-            if (Object.keys(process.binding('natives')).indexOf(module) >= 0) {
-                return module;
-            }
             // search modulePathList
             [
                 ['node_modules'],
@@ -302,6 +298,24 @@
                 });
                 return String(value);
             });
+        };
+
+        local.tryCatchOnError = function (fnc, onError) {
+        /*
+         * this function will try to run the fnc in a try-catch block,
+         * else call onError with the errorCaught
+         */
+            // validate onError
+            local.assert(typeof onError === 'function', typeof onError);
+            try {
+                // reset errorCaught
+                local._debugTryCatchErrorCaught = null;
+                return fnc();
+            } catch (errorCaught) {
+                // debug errorCaught
+                local._debugTryCatchErrorCaught = errorCaught;
+                return onError(errorCaught);
+            }
         };
     }());
 
@@ -490,23 +504,25 @@ local.templateApidocHtml = '\
             /*
              * this function will read the example from the given file
              */
-                try {
-                    return ('\n\n\n\n\n\n\n\n' +
+                var result;
+                local.tryCatchOnError(function () {
+                    result = '';
+                    result = ('\n\n\n\n\n\n\n\n' +
                         local.fs.readFileSync(local.path.resolve(options.dir, file), 'utf8') +
                         '\n\n\n\n\n\n\n\n').replace((/\r\n*/g), '\n');
-                } catch (errorCaught) {
-                    return '';
-                }
+                }, console.error);
+                return result;
             };
             toString = function (value) {
             /*
              * this function will try to return the string form of the value
              */
-                try {
-                    return String(value);
-                } catch (errorCaught) {
-                    return '';
-                }
+                var result;
+                local.tryCatchOnError(function () {
+                    result = '';
+                    result = String(value);
+                }, console.error);
+                return result;
             };
             trimLeft = function (text) {
             /*
@@ -534,7 +550,11 @@ local.templateApidocHtml = '\
             local.objectSetDefault(options, {
                 env: { npm_package_description: '' },
                 packageJson: JSON.parse(readExample('package.json')),
-                require: require
+                require: function (file) {
+                    return local.tryCatchOnError(function () {
+                        return require(file);
+                    }, console.error);
+                }
             });
             Object.keys(options.packageJson).forEach(function (key) {
                 tmp = options.packageJson[key];
@@ -567,8 +587,9 @@ local.templateApidocHtml = '\
                 libFileList: [],
                 moduleDict: {},
                 moduleExtraDict: {},
+                packageJson: { bin: {} },
                 template: local.templateApidocHtml
-            });
+            }, 2);
             // init exampleList
             options.exampleList = options.exampleList.concat(options.exampleFileList.concat(
                 local.fs.readdirSync(options.dir)
@@ -584,17 +605,16 @@ local.templateApidocHtml = '\
                 })
                 .slice(0, 128);
             // init moduleMain
-            try {
+            local.tryCatchOnError(function () {
                 console.error('apidocCreate - requiring ' + options.dir + ' ...');
                 moduleMain = {};
                 moduleMain = options.moduleDict[options.env.npm_package_name] ||
                     options.require(options.dir) ||
-                    options.require(options.dir + '/' + (options.packageJson.bin || {})[
-                        Object.keys(options.packageJson.bin || {})[0]
+                    options.require(options.dir + '/' + (options.packageJson.bin)[
+                        Object.keys(options.packageJson.bin)[0]
                     ]) || {};
                 console.error('apidocCreate - ... required ' + options.dir);
-            } catch (ignore) {
-            }
+            }, console.error);
             tmp = {};
             // handle case where module is a function
             if (typeof moduleMain === 'function') {
@@ -648,60 +668,57 @@ local.templateApidocHtml = '\
             // init moduleExtraDict
             module = options.moduleExtraDict[options.env.npm_package_name] =
                 options.moduleExtraDict[options.env.npm_package_name] || {};
-            [1, 2, 3].forEach(function (depth) {
+            [1, 2, 3, 4].forEach(function (depth) {
                 options.libFileList = options.libFileList.concat(
                     // http://stackoverflow.com
                     // /questions/4509624/how-to-limit-depth-for-recursive-file-list
                     // find . -maxdepth 1 -mindepth 1 -name "*.js" -type f
                     local.child_process.execSync('find "' + options.dir +
                         '" -maxdepth ' + depth + ' -mindepth ' + depth +
-                        ' -name "*.js" -type f | sort | head -n 4096').toString()
+                        ' -name "*.js" -type f | sed -e "s|' + options.dir +
+                        '/||" | grep -iv ' +
+/* jslint-ignore-begin */
+'"\
+/\\.\\|\\(\\b\\|_\\)\\(\
+archive\\|artifact\\|asset\\|\
+bower_component\\|build\\|\
+coverage\\|\
+doc\\|dist\\|\
+example\\|external\\|\
+fixture\\|\
+log\\|\
+min\\|mock\\|\
+node_module\\|\
+rollup\\|\
+test\\|tmp\\|\
+vendor\\)s\\{0,1\\}\\(\\b\\|_\\)\
+" ' +
+/* jslint-ignore-end */
+                            ' | sort | head -n 4096').toString()
                         .split('\n')
-                        .map(function (file) {
-                            return file.replace(options.dir + '/', '');
-                        })
-                        .filter(function (file) {
-                            return !(/^(?:\.git|node_modules|tmp)\b/).test(file);
-                        })
                 );
             });
             options.libFileList.some(function (file) {
-                try {
+                local.tryCatchOnError(function () {
                     tmp = {};
                     tmp.name = local.path.basename(file)
                         .replace('lib.', '')
                         .replace((/\.[^.]*?$/), '')
                         .replace((/\W/g), '_');
-                    if (!tmp.name) {
-                        return;
-                    }
                     [
                         tmp.name,
                         tmp.name.slice(0, 1).toUpperCase() + tmp.name.slice(1)
                     ].some(function (name) {
-                        tmp.skip = local.path.extname(file) !== '.js' ||
-                            ('./' + file).indexOf(options.packageJson.main) >= 0 ||
-                            new RegExp('(?:\\b|_)(?:archive|artifact|asset|' +
-                                'bower_components|build|' +
-                                'coverage|' +
-                                'doc|dist|' +
-                                'example|external|' +
-                                'fixture|' +
-                                'index|' +
-                                'log|' +
-                                'min|mock|' +
-                                'node_modules|' +
-                                'rollup|' +
-                                'test|tmp|' +
-                                'vendor)s{0,1}(?:\\b|_)').test(file.toLowerCase()) ||
-                            module[name];
-                        return tmp.skip;
+                        tmp.isFiltered = name && (!options.packageJson.main ||
+                                ('./' + file).indexOf(options.packageJson.main) < 0) &&
+                            !module[name];
+                        return !tmp.isFiltered;
                     });
-                    if (tmp.skip) {
+                    if (!tmp.isFiltered) {
                         return;
                     }
                     tmp.module = options.require(options.dir + '/' + file);
-                    if (!tmp.module || options.circularList.indexOf(tmp.module) >= 0) {
+                    if (!(tmp.module && options.circularList.indexOf(tmp.module) < 0)) {
                         return;
                     }
                     module[tmp.name] = tmp.module;
@@ -709,9 +726,7 @@ local.templateApidocHtml = '\
                     options.exampleList.push(readExample(file));
                     console.error('apidocCreate - ' + options.exampleList.length +
                         '. added libFile ' + file);
-                } catch (errorCaught) {
-                    console.error(errorCaught);
-                }
+                }, console.error);
                 return options.exampleList.length >= 256;
             });
             local.apidocModuleDictAdd(options, options.moduleExtraDict);
@@ -729,22 +744,20 @@ local.templateApidocHtml = '\
                     module = options.moduleDict[prefix];
                     // handle case where module is a function
                     if (typeof module === 'function') {
-                        try {
+                        local.tryCatchOnError(function () {
                             module[prefix.split('.').slice(-1)[0]] =
                                 module[prefix.split('.').slice(-1)[0]] || module;
-                        } catch (ignore) {
-                        }
+                        }, console.error);
                     }
                     return {
                         elementList: Object.keys(module)
                             .filter(function (key) {
-                                try {
+                                return local.tryCatchOnError(function () {
                                     return key &&
                                         (/^\w[\w\-.]*?$/).test(key) &&
                                         key.indexOf('testCase_') !== 0 &&
                                         module[key] !== options.blacklistDict[key];
-                                } catch (ignore) {
-                                }
+                                }, console.error);
                             })
                             .map(function (key) {
                                 return elementCreate(module, prefix, key);
@@ -777,7 +790,7 @@ local.templateApidocHtml = '\
                     }
                     Object.keys(moduleDict[prefix]).forEach(function (key) {
                         // bug-workaround - buggy electron getter / setter
-                        try {
+                        local.tryCatchOnError(function () {
                             if (!(/^\w[\w\-.]*?$/).test(key) || !moduleDict[prefix][key]) {
                                 return;
                             }
@@ -803,10 +816,9 @@ local.templateApidocHtml = '\
                             ].some(function (dict) {
                                 return Object.keys(dict || {}).some(function (key) {
                                     // bug-workaround - buggy electron getter / setter
-                                    try {
+                                    return local.tryCatchOnError(function () {
                                         return typeof dict[key] === 'function';
-                                    } catch (ignore) {
-                                    }
+                                    }, console.error);
                                 });
                             });
                             if (!isModule) {
@@ -814,8 +826,7 @@ local.templateApidocHtml = '\
                             }
                             options.circularList.push(tmp.module);
                             options.moduleDict[tmp.name] = tmp.module;
-                        } catch (ignore) {
-                        }
+                        }, console.error);
                     });
                 });
             });
@@ -10272,7 +10283,7 @@ local.assetsDict['/assets.test.template.js'] = '\
         // re-init local from example.js\n\
         case \'node\':\n\
             local = (local.global.utility2_rollup || require(\'utility2\'))\n\
-                .requireExampleJsFromReadme();\n\
+                .requireReadme();\n\
             break;\n\
         }\n\
         // export local\n\
@@ -13329,10 +13340,6 @@ return Utf8ArrayToStr(bff);
             if (!module || module === '.' || module.indexOf('/') >= 0) {
                 return require('path').resolve(process.cwd(), module || '');
             }
-            // search builtin
-            if (Object.keys(process.binding('natives')).indexOf(module) >= 0) {
-                return module;
-            }
             // search modulePathList
             [
                 ['node_modules'],
@@ -13864,7 +13871,7 @@ return Utf8ArrayToStr(bff);
                         ['-c', 'find . -type f | grep -v ' +
 /* jslint-ignore-begin */
 '"\
-/\\.\\|.*\\(\\b\\|_\\)\\(\\.\\d\\|\
+/\\.\\|\\(\\b\\|_\\)\\(\\.\\d\\|\
 archive\\|artifact\\|\
 bower_component\\|build\\|\
 coverage\\|\
@@ -13879,7 +13886,7 @@ node_module\\|\
 rollup\\|\
 swp\\|\
 tmp\\|\
-vendor\\)\\(\\b\\|[_s]\\)\
+vendor\\)s\\{0,1\\}\\(\\b\\|_\\)\
 " ' +
 /* jslint-ignore-end */
                             '| tr "\\n" "\\000" | xargs -0 grep -in "' +
@@ -13939,7 +13946,7 @@ vendor\\)\\(\\b\\|[_s]\\)\
             }()));
         };
 
-        local.requireExampleJsFromReadme = function () {
+        local.requireReadme = function () {
         /*
          * this function will require and export example.js embedded in README.md
          */
@@ -14697,6 +14704,7 @@ instruction\n\
         /*
          * this function will create test-report artifacts
          */
+            testReport = local.objectSetDefault(testReport, { testPlatformList: [] });
             // print test-report summary
             console.error('\n' + new Array(56).join('-') + '\n' + testReport.testPlatformList
                 .filter(function (testPlatform) {
@@ -14753,8 +14761,7 @@ instruction\n\
             if (testReport.testsFailed) {
                 console.error('\n' + JSON.stringify(testReport, null, 4) + '\n');
             }
-            // exit with number of tests failed
-            local.exit(testReport.testsFailed);
+            return testReport;
         };
 
         local.testReportMerge = function (testReport1, testReport2) {
@@ -15670,7 +15677,7 @@ instruction\n\
                 local.onErrorThrow
             );
             return;
-        case 'onParallelListSpawn':
+        case 'onParallelListExec':
             local.onParallelList({
                 list: process.argv[3].split('\n').filter(function (element) {
                     return element.trim();
@@ -15684,11 +15691,16 @@ instruction\n\
                     ['-c', '. ' + local.__dirname + '/lib.utility2.sh; ' + options.element],
                     { stdio: ['ignore', 1, 2] }
                 ).on('exit', function (exitCode) {
-                    console.error('onParallelListSpawn - [' + (onParallel.ii + 1) +
+                    console.error('onParallelListExec - [' + (onParallel.ii + 1) +
                         ' of ' + options.list.length + '] exitCode ' + exitCode);
                     onParallel(exitCode && new Error(exitCode), options);
                 });
             }, local.exit);
+            return;
+        case 'testReportCreate':
+            local.exit(local.testReportCreate(local.tryCatchOnError(function () {
+                return require(local.env.npm_config_dir_build + '/test-report.json');
+            }, local.onErrorDefault)).testsFailed);
             return;
         }
         // init lib

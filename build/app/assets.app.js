@@ -5,7 +5,7 @@
 /*
 assets.app.js
 
-#### api documentation for stream-buffers (v3.0.1) [![npm package](https://img.shields.io/npm/v/npmdoc-stream-buffers.svg?style=flat-square)](https://www.npmjs.org/package/npmdoc-stream-buffers) [![travis-ci.org build-status](https://api.travis-ci.org/npmdoc/node-npmdoc-stream-buffers.svg)](https://travis-ci.org/npmdoc/node-npmdoc-stream-buffers)
+#### api documentation for [stream-buffers (v3.0.1)](https://github.com/samcday/node-stream-buffer#readme) [![npm package](https://img.shields.io/npm/v/npmdoc-stream-buffers.svg?style=flat-square)](https://www.npmjs.org/package/npmdoc-stream-buffers) [![travis-ci.org build-status](https://api.travis-ci.org/npmdoc/node-npmdoc-stream-buffers.svg)](https://travis-ci.org/npmdoc/node-npmdoc-stream-buffers)
 
 instruction
     1. save this script as assets.app.js
@@ -147,10 +147,6 @@ instruction
             // search process.cwd()
             if (!module || module === '.' || module.indexOf('/') >= 0) {
                 return require('path').resolve(process.cwd(), module || '');
-            }
-            // search builtin
-            if (Object.keys(process.binding('natives')).indexOf(module) >= 0) {
-                return module;
             }
             // search modulePathList
             [
@@ -321,6 +317,24 @@ instruction
                 });
                 return String(value);
             });
+        };
+
+        local.tryCatchOnError = function (fnc, onError) {
+        /*
+         * this function will try to run the fnc in a try-catch block,
+         * else call onError with the errorCaught
+         */
+            // validate onError
+            local.assert(typeof onError === 'function', typeof onError);
+            try {
+                // reset errorCaught
+                local._debugTryCatchErrorCaught = null;
+                return fnc();
+            } catch (errorCaught) {
+                // debug errorCaught
+                local._debugTryCatchErrorCaught = errorCaught;
+                return onError(errorCaught);
+            }
         };
     }());
 
@@ -509,23 +523,25 @@ local.templateApidocHtml = '\
             /*
              * this function will read the example from the given file
              */
-                try {
-                    return ('\n\n\n\n\n\n\n\n' +
+                var result;
+                local.tryCatchOnError(function () {
+                    result = '';
+                    result = ('\n\n\n\n\n\n\n\n' +
                         local.fs.readFileSync(local.path.resolve(options.dir, file), 'utf8') +
                         '\n\n\n\n\n\n\n\n').replace((/\r\n*/g), '\n');
-                } catch (errorCaught) {
-                    return '';
-                }
+                }, console.error);
+                return result;
             };
             toString = function (value) {
             /*
              * this function will try to return the string form of the value
              */
-                try {
-                    return String(value);
-                } catch (errorCaught) {
-                    return '';
-                }
+                var result;
+                local.tryCatchOnError(function () {
+                    result = '';
+                    result = String(value);
+                }, console.error);
+                return result;
             };
             trimLeft = function (text) {
             /*
@@ -553,7 +569,11 @@ local.templateApidocHtml = '\
             local.objectSetDefault(options, {
                 env: { npm_package_description: '' },
                 packageJson: JSON.parse(readExample('package.json')),
-                require: require
+                require: function (file) {
+                    return local.tryCatchOnError(function () {
+                        return require(file);
+                    }, console.error);
+                }
             });
             Object.keys(options.packageJson).forEach(function (key) {
                 tmp = options.packageJson[key];
@@ -586,8 +606,9 @@ local.templateApidocHtml = '\
                 libFileList: [],
                 moduleDict: {},
                 moduleExtraDict: {},
+                packageJson: { bin: {} },
                 template: local.templateApidocHtml
-            });
+            }, 2);
             // init exampleList
             options.exampleList = options.exampleList.concat(options.exampleFileList.concat(
                 local.fs.readdirSync(options.dir)
@@ -603,17 +624,16 @@ local.templateApidocHtml = '\
                 })
                 .slice(0, 128);
             // init moduleMain
-            try {
+            local.tryCatchOnError(function () {
                 console.error('apidocCreate - requiring ' + options.dir + ' ...');
                 moduleMain = {};
                 moduleMain = options.moduleDict[options.env.npm_package_name] ||
                     options.require(options.dir) ||
-                    options.require(options.dir + '/' + (options.packageJson.bin || {})[
-                        Object.keys(options.packageJson.bin || {})[0]
+                    options.require(options.dir + '/' + (options.packageJson.bin)[
+                        Object.keys(options.packageJson.bin)[0]
                     ]) || {};
                 console.error('apidocCreate - ... required ' + options.dir);
-            } catch (ignore) {
-            }
+            }, console.error);
             tmp = {};
             // handle case where module is a function
             if (typeof moduleMain === 'function') {
@@ -667,60 +687,57 @@ local.templateApidocHtml = '\
             // init moduleExtraDict
             module = options.moduleExtraDict[options.env.npm_package_name] =
                 options.moduleExtraDict[options.env.npm_package_name] || {};
-            [1, 2, 3].forEach(function (depth) {
+            [1, 2, 3, 4].forEach(function (depth) {
                 options.libFileList = options.libFileList.concat(
                     // http://stackoverflow.com
                     // /questions/4509624/how-to-limit-depth-for-recursive-file-list
                     // find . -maxdepth 1 -mindepth 1 -name "*.js" -type f
                     local.child_process.execSync('find "' + options.dir +
                         '" -maxdepth ' + depth + ' -mindepth ' + depth +
-                        ' -name "*.js" -type f | sort | head -n 4096').toString()
+                        ' -name "*.js" -type f | sed -e "s|' + options.dir +
+                        '/||" | grep -iv ' +
+/* jslint-ignore-begin */
+'"\
+/\\.\\|\\(\\b\\|_\\)\\(\
+archive\\|artifact\\|asset\\|\
+bower_component\\|build\\|\
+coverage\\|\
+doc\\|dist\\|\
+example\\|external\\|\
+fixture\\|\
+log\\|\
+min\\|mock\\|\
+node_module\\|\
+rollup\\|\
+test\\|tmp\\|\
+vendor\\)s\\{0,1\\}\\(\\b\\|_\\)\
+" ' +
+/* jslint-ignore-end */
+                            ' | sort | head -n 4096').toString()
                         .split('\n')
-                        .map(function (file) {
-                            return file.replace(options.dir + '/', '');
-                        })
-                        .filter(function (file) {
-                            return !(/^(?:\.git|node_modules|tmp)\b/).test(file);
-                        })
                 );
             });
             options.libFileList.some(function (file) {
-                try {
+                local.tryCatchOnError(function () {
                     tmp = {};
                     tmp.name = local.path.basename(file)
                         .replace('lib.', '')
                         .replace((/\.[^.]*?$/), '')
                         .replace((/\W/g), '_');
-                    if (!tmp.name) {
-                        return;
-                    }
                     [
                         tmp.name,
                         tmp.name.slice(0, 1).toUpperCase() + tmp.name.slice(1)
                     ].some(function (name) {
-                        tmp.skip = local.path.extname(file) !== '.js' ||
-                            ('./' + file).indexOf(options.packageJson.main) >= 0 ||
-                            new RegExp('(?:\\b|_)(?:archive|artifact|asset|' +
-                                'bower_components|build|' +
-                                'coverage|' +
-                                'doc|dist|' +
-                                'example|external|' +
-                                'fixture|' +
-                                'index|' +
-                                'log|' +
-                                'min|mock|' +
-                                'node_modules|' +
-                                'rollup|' +
-                                'test|tmp|' +
-                                'vendor)s{0,1}(?:\\b|_)').test(file.toLowerCase()) ||
-                            module[name];
-                        return tmp.skip;
+                        tmp.isFiltered = name && (!options.packageJson.main ||
+                                ('./' + file).indexOf(options.packageJson.main) < 0) &&
+                            !module[name];
+                        return !tmp.isFiltered;
                     });
-                    if (tmp.skip) {
+                    if (!tmp.isFiltered) {
                         return;
                     }
                     tmp.module = options.require(options.dir + '/' + file);
-                    if (!tmp.module || options.circularList.indexOf(tmp.module) >= 0) {
+                    if (!(tmp.module && options.circularList.indexOf(tmp.module) < 0)) {
                         return;
                     }
                     module[tmp.name] = tmp.module;
@@ -728,9 +745,7 @@ local.templateApidocHtml = '\
                     options.exampleList.push(readExample(file));
                     console.error('apidocCreate - ' + options.exampleList.length +
                         '. added libFile ' + file);
-                } catch (errorCaught) {
-                    console.error(errorCaught);
-                }
+                }, console.error);
                 return options.exampleList.length >= 256;
             });
             local.apidocModuleDictAdd(options, options.moduleExtraDict);
@@ -748,22 +763,20 @@ local.templateApidocHtml = '\
                     module = options.moduleDict[prefix];
                     // handle case where module is a function
                     if (typeof module === 'function') {
-                        try {
+                        local.tryCatchOnError(function () {
                             module[prefix.split('.').slice(-1)[0]] =
                                 module[prefix.split('.').slice(-1)[0]] || module;
-                        } catch (ignore) {
-                        }
+                        }, console.error);
                     }
                     return {
                         elementList: Object.keys(module)
                             .filter(function (key) {
-                                try {
+                                return local.tryCatchOnError(function () {
                                     return key &&
                                         (/^\w[\w\-.]*?$/).test(key) &&
                                         key.indexOf('testCase_') !== 0 &&
                                         module[key] !== options.blacklistDict[key];
-                                } catch (ignore) {
-                                }
+                                }, console.error);
                             })
                             .map(function (key) {
                                 return elementCreate(module, prefix, key);
@@ -796,7 +809,7 @@ local.templateApidocHtml = '\
                     }
                     Object.keys(moduleDict[prefix]).forEach(function (key) {
                         // bug-workaround - buggy electron getter / setter
-                        try {
+                        local.tryCatchOnError(function () {
                             if (!(/^\w[\w\-.]*?$/).test(key) || !moduleDict[prefix][key]) {
                                 return;
                             }
@@ -822,10 +835,9 @@ local.templateApidocHtml = '\
                             ].some(function (dict) {
                                 return Object.keys(dict || {}).some(function (key) {
                                     // bug-workaround - buggy electron getter / setter
-                                    try {
+                                    return local.tryCatchOnError(function () {
                                         return typeof dict[key] === 'function';
-                                    } catch (ignore) {
-                                    }
+                                    }, console.error);
                                 });
                             });
                             if (!isModule) {
@@ -833,8 +845,7 @@ local.templateApidocHtml = '\
                             }
                             options.circularList.push(tmp.module);
                             options.moduleDict[tmp.name] = tmp.module;
-                        } catch (ignore) {
-                        }
+                        }, console.error);
                     });
                 });
             });
@@ -10291,7 +10302,7 @@ local.assetsDict['/assets.test.template.js'] = '\
         // re-init local from example.js\n\
         case \'node\':\n\
             local = (local.global.utility2_rollup || require(\'utility2\'))\n\
-                .requireExampleJsFromReadme();\n\
+                .requireReadme();\n\
             break;\n\
         }\n\
         // export local\n\
@@ -13348,10 +13359,6 @@ return Utf8ArrayToStr(bff);
             if (!module || module === '.' || module.indexOf('/') >= 0) {
                 return require('path').resolve(process.cwd(), module || '');
             }
-            // search builtin
-            if (Object.keys(process.binding('natives')).indexOf(module) >= 0) {
-                return module;
-            }
             // search modulePathList
             [
                 ['node_modules'],
@@ -13883,7 +13890,7 @@ return Utf8ArrayToStr(bff);
                         ['-c', 'find . -type f | grep -v ' +
 /* jslint-ignore-begin */
 '"\
-/\\.\\|.*\\(\\b\\|_\\)\\(\\.\\d\\|\
+/\\.\\|\\(\\b\\|_\\)\\(\\.\\d\\|\
 archive\\|artifact\\|\
 bower_component\\|build\\|\
 coverage\\|\
@@ -13898,7 +13905,7 @@ node_module\\|\
 rollup\\|\
 swp\\|\
 tmp\\|\
-vendor\\)\\(\\b\\|[_s]\\)\
+vendor\\)s\\{0,1\\}\\(\\b\\|_\\)\
 " ' +
 /* jslint-ignore-end */
                             '| tr "\\n" "\\000" | xargs -0 grep -in "' +
@@ -13958,7 +13965,7 @@ vendor\\)\\(\\b\\|[_s]\\)\
             }()));
         };
 
-        local.requireExampleJsFromReadme = function () {
+        local.requireReadme = function () {
         /*
          * this function will require and export example.js embedded in README.md
          */
@@ -14716,6 +14723,7 @@ instruction\n\
         /*
          * this function will create test-report artifacts
          */
+            testReport = local.objectSetDefault(testReport, { testPlatformList: [] });
             // print test-report summary
             console.error('\n' + new Array(56).join('-') + '\n' + testReport.testPlatformList
                 .filter(function (testPlatform) {
@@ -14772,8 +14780,7 @@ instruction\n\
             if (testReport.testsFailed) {
                 console.error('\n' + JSON.stringify(testReport, null, 4) + '\n');
             }
-            // exit with number of tests failed
-            local.exit(testReport.testsFailed);
+            return testReport;
         };
 
         local.testReportMerge = function (testReport1, testReport2) {
@@ -15689,7 +15696,7 @@ instruction\n\
                 local.onErrorThrow
             );
             return;
-        case 'onParallelListSpawn':
+        case 'onParallelListExec':
             local.onParallelList({
                 list: process.argv[3].split('\n').filter(function (element) {
                     return element.trim();
@@ -15703,11 +15710,16 @@ instruction\n\
                     ['-c', '. ' + local.__dirname + '/lib.utility2.sh; ' + options.element],
                     { stdio: ['ignore', 1, 2] }
                 ).on('exit', function (exitCode) {
-                    console.error('onParallelListSpawn - [' + (onParallel.ii + 1) +
+                    console.error('onParallelListExec - [' + (onParallel.ii + 1) +
                         ' of ' + options.list.length + '] exitCode ' + exitCode);
                     onParallel(exitCode && new Error(exitCode), options);
                 });
             }, local.exit);
+            return;
+        case 'testReportCreate':
+            local.exit(local.testReportCreate(local.tryCatchOnError(function () {
+                return require(local.env.npm_config_dir_build + '/test-report.json');
+            }, local.onErrorDefault)).testsFailed);
             return;
         }
         // init lib
@@ -20012,7 +20024,7 @@ local.templateUiResponseAjax = '\
         global.utility2_rollup;
     local.local = local;
 /* jslint-ignore-begin */
-local._stateInit({"utility2":{"assetsDict":{"/assets.index.template.html":"<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{{env.npm_package_name}} (v{{env.npm_package_version}})</title>\n<style>\n/*csslint\n    box-sizing: false,\n    universal-selector: false\n*/\n* {\n    box-sizing: border-box;\n}\nbody {\n    background: #dde;\n    font-family: Arial, Helvetica, sans-serif;\n    margin: 2rem;\n}\nbody > * {\n    margin-bottom: 1rem;\n}\n.utility2FooterDiv {\n    margin-top: 20px;\n    text-align: center;\n}\n</style>\n<style>\n/*csslint\n*/\ntextarea {\n    font-family: monospace;\n    height: 10rem;\n    width: 100%;\n}\ntextarea[readonly] {\n    background: #ddd;\n}\n</style>\n</head>\n<body>\n<!-- utility2-comment\n<div id=\"ajaxProgressDiv1\" style=\"background: #d00; height: 2px; left: 0; margin: 0; padding: 0; position: fixed; top: 0; transition: background 0.5s, width 1.5s; width: 25%;\"></div>\nutility2-comment -->\n<h1>\n<!-- utility2-comment\n    <a\n        {{#if env.npm_package_homepage}}\n        href=\"{{env.npm_package_homepage}}\"\n        {{/if env.npm_package_homepage}}\n        target=\"_blank\"\n    >\nutility2-comment -->\n        {{env.npm_package_name}} (v{{env.npm_package_version}})\n<!-- utility2-comment\n    </a>\nutility2-comment -->\n</h1>\n<h3>{{env.npm_package_description}}</h3>\n<!-- utility2-comment\n<h4><a download href=\"assets.app.js\">download standalone app</a></h4>\n<button class=\"onclick onreset\" id=\"testRunButton1\">run internal test</button><br>\n<div id=\"testReportDiv1\" style=\"display: none;\"></div>\nutility2-comment -->\n\n\n\n<label>stderr and stdout</label>\n<textarea class=\"resettable\" id=\"outputTextareaStdout1\" readonly></textarea>\n<!-- utility2-comment\n{{#if isRollup}}\n<script src=\"assets.app.js\"></script>\n{{#unless isRollup}}\nutility2-comment -->\n<script src=\"assets.utility2.rollup.js\"></script>\n<script src=\"jsonp.utility2._stateInit?callback=window.utility2._stateInit\"></script>\n<script src=\"assets.npmdoc_stream_buffers.rollup.js\"></script>\n<script src=\"assets.example.js\"></script>\n<script src=\"assets.test.js\"></script>\n<!-- utility2-comment\n{{/if isRollup}}\nutility2-comment -->\n<div class=\"utility2FooterDiv\">\n    [ this app was created with\n    <a href=\"https://github.com/kaizhu256/node-utility2\" target=\"_blank\">utility2</a>\n    ]\n</div>\n</body>\n</html>\n"},"env":{"NODE_ENV":"test","npm_package_description":"#### api documentation for stream-buffers (v3.0.1) [![npm package](https://img.shields.io/npm/v/npmdoc-stream-buffers.svg?style=flat-square)](https://www.npmjs.org/package/npmdoc-stream-buffers) [![travis-ci.org build-status](https://api.travis-ci.org/npmdoc/node-npmdoc-stream-buffers.svg)](https://travis-ci.org/npmdoc/node-npmdoc-stream-buffers)","npm_package_homepage":"https://github.com/npmdoc/node-npmdoc-stream-buffers","npm_package_name":"npmdoc-stream-buffers","npm_package_nameAlias":"npmdoc_stream_buffers","npm_package_version":"0.0.4"}}});
+local._stateInit({"utility2":{"assetsDict":{"/assets.index.template.html":"<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{{env.npm_package_name}} (v{{env.npm_package_version}})</title>\n<style>\n/*csslint\n    box-sizing: false,\n    universal-selector: false\n*/\n* {\n    box-sizing: border-box;\n}\nbody {\n    background: #dde;\n    font-family: Arial, Helvetica, sans-serif;\n    margin: 2rem;\n}\nbody > * {\n    margin-bottom: 1rem;\n}\n.utility2FooterDiv {\n    margin-top: 20px;\n    text-align: center;\n}\n</style>\n<style>\n/*csslint\n*/\ntextarea {\n    font-family: monospace;\n    height: 10rem;\n    width: 100%;\n}\ntextarea[readonly] {\n    background: #ddd;\n}\n</style>\n</head>\n<body>\n<!-- utility2-comment\n<div id=\"ajaxProgressDiv1\" style=\"background: #d00; height: 2px; left: 0; margin: 0; padding: 0; position: fixed; top: 0; transition: background 0.5s, width 1.5s; width: 25%;\"></div>\nutility2-comment -->\n<h1>\n<!-- utility2-comment\n    <a\n        {{#if env.npm_package_homepage}}\n        href=\"{{env.npm_package_homepage}}\"\n        {{/if env.npm_package_homepage}}\n        target=\"_blank\"\n    >\nutility2-comment -->\n        {{env.npm_package_name}} (v{{env.npm_package_version}})\n<!-- utility2-comment\n    </a>\nutility2-comment -->\n</h1>\n<h3>{{env.npm_package_description}}</h3>\n<!-- utility2-comment\n<h4><a download href=\"assets.app.js\">download standalone app</a></h4>\n<button class=\"onclick onreset\" id=\"testRunButton1\">run internal test</button><br>\n<div id=\"testReportDiv1\" style=\"display: none;\"></div>\nutility2-comment -->\n\n\n\n<label>stderr and stdout</label>\n<textarea class=\"resettable\" id=\"outputTextareaStdout1\" readonly></textarea>\n<!-- utility2-comment\n{{#if isRollup}}\n<script src=\"assets.app.js\"></script>\n{{#unless isRollup}}\nutility2-comment -->\n<script src=\"assets.utility2.rollup.js\"></script>\n<script src=\"jsonp.utility2._stateInit?callback=window.utility2._stateInit\"></script>\n<script src=\"assets.npmdoc_stream_buffers.rollup.js\"></script>\n<script src=\"assets.example.js\"></script>\n<script src=\"assets.test.js\"></script>\n<!-- utility2-comment\n{{/if isRollup}}\nutility2-comment -->\n<div class=\"utility2FooterDiv\">\n    [ this app was created with\n    <a href=\"https://github.com/kaizhu256/node-utility2\" target=\"_blank\">utility2</a>\n    ]\n</div>\n</body>\n</html>\n"},"env":{"NODE_ENV":"test","npm_package_description":"#### api documentation for [stream-buffers (v3.0.1)](https://github.com/samcday/node-stream-buffer#readme) [![npm package](https://img.shields.io/npm/v/npmdoc-stream-buffers.svg?style=flat-square)](https://www.npmjs.org/package/npmdoc-stream-buffers) [![travis-ci.org build-status](https://api.travis-ci.org/npmdoc/node-npmdoc-stream-buffers.svg)](https://travis-ci.org/npmdoc/node-npmdoc-stream-buffers)","npm_package_homepage":"https://github.com/npmdoc/node-npmdoc-stream-buffers","npm_package_name":"npmdoc-stream-buffers","npm_package_nameAlias":"npmdoc_stream_buffers","npm_package_version":"0.0.4"}}});
 /* jslint-ignore-end */
 }());
 /* script-end local._stateInit */
@@ -20459,7 +20471,7 @@ utility2-comment -->\n\
         // re-init local from example.js
         case 'node':
             local = (local.global.utility2_rollup || require('utility2'))
-                .requireExampleJsFromReadme();
+                .requireReadme();
             break;
         }
         // export local

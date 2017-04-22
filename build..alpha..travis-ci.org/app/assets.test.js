@@ -48,7 +48,7 @@
         // re-init local from example.js
         case 'node':
             local = (local.global.utility2_rollup || require('utility2'))
-                .requireExampleJsFromReadme();
+                .requireReadme();
             break;
         }
         // export local
